@@ -37,6 +37,8 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <cstdlib>
+#include <iostream>
 
 #ifndef USE_EXT_MODULE_LAUNCH
 #define USE_EXT_MODULE_LAUNCH 1
@@ -1065,8 +1067,45 @@ int main(int argc, char **argv) {
 
         if(driver_data_type == driverFloat)
             launch_conv_driver(&conv_bwd_driver, &conv_args, tunables, "bwd",  driver_data_type, p_bcsv, device_input, device_weight, device_output, bwd_pre, bwd_post);
-        else
-            launch_conv_driver(&conv_bwd_driver, &conv_args, tunables, "bwd",  driver_data_type, p_bcsv, device_input_dtype, device_weight_dtype, device_output_dtype, bwd_pre, bwd_post);
+        else {
+            const char *env_dbg_alloc_sz = std::getenv("DBG_FORCE_BWD_FP16_WEI_ALLOC_SIZE");
+            const char *env_dbg_back_off = std::getenv("DBG_BACK_OFFSET");
+            if (env_dbg_alloc_sz && env_dbg_back_off) {
+                std::cout << "DEBUG: forcing new addr for wei\n";
+
+                size_t dbg_buf_sz = std::atoll(env_dbg_alloc_sz);
+                size_t dbg_back_off = std::atoll(env_dbg_back_off);
+
+                size_t wei_sz = static_cast<size_t>(x) * y * k * c / ngroups /ngroups * 2;
+                
+                if (dbg_back_off + wei_sz > dbg_buf_sz) {
+                    std::cout << "Warning: forced alloc size (=" << dbg_buf_sz
+                              << ") is smaller then filter size (=" << wei_sz
+                              << ") plus back offset (=" << dbg_back_off
+                              << std::endl;
+                }
+
+                
+                void *dbg_buf;
+                HIP_CALL(hipMalloc(&dbg_buf, dbg_buf_sz));
+
+                char *p = reinterpret_cast<char *>(dbg_buf);
+                size_t offset = dbg_buf_sz - wei_sz - dbg_back_off;
+                void *forced_wei = p + offset;
+                void *buf_boundry = p + dbg_buf_sz;
+                std::cout << "Buf size:             " << dbg_buf_sz << std::endl;
+                std::cout << "Offset from start:    " << offset << std::endl;
+                std::cout << "Back offset from end: " << dbg_back_off << std::endl;
+                std::cout << "Buf start:       " << dbg_buf << std::endl;
+                std::cout << "Buf end+1:       " << buf_boundry << std::endl;
+                std::cout << "Forced wei addr: " << forced_wei << std::endl;
+
+                launch_conv_driver(&conv_bwd_driver, &conv_args, tunables, "bwd",  driver_data_type, p_bcsv, device_input_dtype, forced_wei,          device_output_dtype, bwd_pre, bwd_post);
+            } else {
+                launch_conv_driver(&conv_bwd_driver, &conv_args, tunables, "bwd",  driver_data_type, p_bcsv, device_input_dtype, device_weight_dtype, device_output_dtype, bwd_pre, bwd_post);
+            }
+
+        }
 
         if (need_verify) 
             free(device_input_to_host);
