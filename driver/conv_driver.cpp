@@ -37,6 +37,8 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <cstdlib>
+#include <iostream>
 
 #ifndef USE_EXT_MODULE_LAUNCH
 #define USE_EXT_MODULE_LAUNCH 1
@@ -75,6 +77,42 @@
 #include "igemm_fwd_gtc_driver.h"
 #include "igemm_bwd_gtc_driver.h"
 #include "igemm_wrw_gtc_driver.h"
+
+void dump_shader_args(std::string dump_dir,
+                      const dumpheader_t &const_header,
+                      const std::vector<dispatchinfo_t> &dispatches,
+                      std::string kernel_name)
+{
+    dumpheader_t header = const_header;
+    header.version = DUMPFILE_VERSION;
+    if (header.n_dispatches != dispatches.size()) {
+        std::cout << "ERROR: header.n_dispatches != dispatches.size()" << std::endl;
+        assert(0);
+    }
+
+    std::string dump_path = dump_dir + kernel_name + ".gks" + std::to_string(header.gks) + ".dump";
+    std::ofstream fs(dump_path, std::ios::out | std::ios::binary);
+    fs.write(reinterpret_cast<const char *>(&header), sizeof(dumpheader_t));
+    for (auto &di : dispatches) {
+        fs.write(reinterpret_cast<const char *>(&di), sizeof(di));
+    }
+    fs.write(kernel_name.c_str(), kernel_name.size());
+    fs.close();
+}
+
+misadatatype_t dtype(const std::string &s) {
+    if (!s.compare("fp32"))
+        return misadatatype_t::FP32;
+    if (!s.compare("fp16"))
+        return misadatatype_t::FP16;
+    if (!s.compare("bf16"))
+        return misadatatype_t::BF16;
+    if (!s.compare("int8"))
+        return misadatatype_t::INT8;
+    if (!s.compare("int4"))
+        return misadatatype_t::INT4;
+    return misadatatype_t::UNKNOWN;
+}
 
 static inline double theoritical_gflops(double sclk_ghz, size_t cu,
                                              size_t simd) {
@@ -373,6 +411,7 @@ void launch_conv_driver(driver_t * driver, const args_t *conv_args, const std::v
 {
     int sclk_mhz = env_get_int("IGEMM_SCLK_MHZ", SCLK_MHZ);
     std::string run_only_kernel = env_get_str("IGEMM_RUN_ONLY_KERNEL", IGEMM_RUN_ONLY_KERNEL_DEFAULT);
+    std::string dump_dir = env_get_str("IGEMM_DUMPDIR_FASTEST_CONFIG", "");
     int log_fastest_config = env_get_int("IGEMM_LOG_FASTEST_CONFIG", 0);
     int sleep_ms = env_get_int("IGEMM_SLEEP_MS", 0);
     int dump_gmap = env_get_int("IGEMM_DUMP_GMAP", 0);
@@ -538,7 +577,13 @@ void launch_conv_driver(driver_t * driver, const args_t *conv_args, const std::v
                     fastest_result.duration_ms,
                     fastest_result.gflops / 1000,
                     fastest_result.efficiency);
+                printf(fastest_result.dumpheader.use_prolog  ? " fprolog1"  : " fprolog0");
+                printf(fastest_result.dumpheader.use_postlog ? " fpostlog1" : " fpostlog0");
+                printf(" workspace_size=%d", (int)fastest_result.dumpheader.workspace_size);
+                printf("\n");
             }
+            if (dump_dir.size())
+                dump_shader_args(dump_dir, fastest_result.dumpheader, fastest_result.dumpdata, fastest_result.kernel_name);
         }
     }else if(driver->driver_mode == driver_mode_heuristic){
         igemm_gtc_tunable_t selected_tunable = driver->heuristic_select_kernel(conv_args);
@@ -1065,8 +1110,45 @@ int main(int argc, char **argv) {
 
         if(driver_data_type == driverFloat)
             launch_conv_driver(&conv_bwd_driver, &conv_args, tunables, "bwd",  driver_data_type, p_bcsv, device_input, device_weight, device_output, bwd_pre, bwd_post);
-        else
-            launch_conv_driver(&conv_bwd_driver, &conv_args, tunables, "bwd",  driver_data_type, p_bcsv, device_input_dtype, device_weight_dtype, device_output_dtype, bwd_pre, bwd_post);
+        else {
+            const char *env_dbg_alloc_sz = std::getenv("DBG_FORCE_BWD_FP16_WEI_ALLOC_SIZE");
+            const char *env_dbg_back_off = std::getenv("DBG_BACK_OFFSET");
+            if (env_dbg_alloc_sz && env_dbg_back_off) {
+                std::cout << "DEBUG: forcing new addr for wei\n";
+
+                size_t dbg_buf_sz = std::atoll(env_dbg_alloc_sz);
+                size_t dbg_back_off = std::atoll(env_dbg_back_off);
+
+                size_t wei_sz = static_cast<size_t>(x) * y * k * c / ngroups /ngroups * 2;
+                
+                if (dbg_back_off + wei_sz > dbg_buf_sz) {
+                    std::cout << "Warning: forced alloc size (=" << dbg_buf_sz
+                              << ") is smaller then filter size (=" << wei_sz
+                              << ") plus back offset (=" << dbg_back_off
+                              << std::endl;
+                }
+
+                
+                void *dbg_buf;
+                HIP_CALL(hipMalloc(&dbg_buf, dbg_buf_sz));
+
+                char *p = reinterpret_cast<char *>(dbg_buf);
+                size_t offset = dbg_buf_sz - wei_sz - dbg_back_off;
+                void *forced_wei = p + offset;
+                void *buf_boundry = p + dbg_buf_sz;
+                std::cout << "\tBuf size:             " << dbg_buf_sz << std::endl;
+                std::cout << "\tOffset from start:    " << offset << std::endl;
+                std::cout << "\tBack offset from end: " << dbg_back_off << std::endl;
+                std::cout << "\tBuf start:       " << dbg_buf << std::endl;
+                std::cout << "\tBuf end+1:       " << buf_boundry << std::endl;
+                std::cout << "\tForced wei addr: " << forced_wei << std::endl;
+
+                launch_conv_driver(&conv_bwd_driver, &conv_args, tunables, "bwd",  driver_data_type, p_bcsv, device_input_dtype, forced_wei,          device_output_dtype, bwd_pre, bwd_post);
+            } else {
+                launch_conv_driver(&conv_bwd_driver, &conv_args, tunables, "bwd",  driver_data_type, p_bcsv, device_input_dtype, device_weight_dtype, device_output_dtype, bwd_pre, bwd_post);
+            }
+
+        }
 
         if (need_verify) 
             free(device_input_to_host);

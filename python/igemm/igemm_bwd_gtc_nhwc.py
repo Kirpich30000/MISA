@@ -28,6 +28,7 @@ from ..codegen import *
 from ..operations import *
 from .igemm_base import *
 
+SHISA_DEBUG = 1
 IGEMM_BWD_GTC_NHWC_PACK_OUT_FLAG = 0
 # IGEMM_BWD_GTC_NHWC_P_INTERLEAVE_GLD = False     # p tensor interleave
 
@@ -1036,6 +1037,10 @@ class igemm_bwd_gtc_nhwc_t(mc_base_t):
                 self.s_gemmk_split          = sym_t("s_gemmk_split"            ,sseq(1))
                 self.s_sub_k                = sym_t("s_sub_k"                  ,sseq(1))
             self.s_tmp                      = sym_t("s_tmp"                    ,sseq(6, 2))
+            if SHISA_DEBUG:
+                self.s_GroupIDX             = sym_t("GroupIDX"                 ,sseq(1))
+                self.s_GroupIDY             = sym_t("GroupIDY"                 ,sseq(1))
+                self.s_debugcnt             = sym_t("debugcnt"                 ,sseq(1))
             self.s_end                      = sym_t("s_end"                    ,sseq())
 
         def get_count(self):
@@ -1228,6 +1233,8 @@ class igemm_bwd_gtc_nhwc_t(mc_base_t):
             if outer.tunable.nxe != 0:
                 self.v_in_hi_sshift     = sym_t("v_in_hi_sshift"    ,self.v_tmp.value + 4)
                 self.v_in_wi_sshift     = sym_t("v_in_wi_sshift"    ,self.v_tmp.value + 5)
+            if SHISA_DEBUG:
+                self.v_ThreadID         = sym_t("ThreadID", vseq(1))
             total_vgpr                  = vseq()
             self.accum_start            = 0
             if outer.tunable.fma_type == IGEMM_GTC_TUNABLE_FMA_TYPE_XDLOPS:
@@ -1863,6 +1870,11 @@ class igemm_bwd_gtc_nhwc_t(mc_base_t):
         k_pack_gld_b = tb_k                    # weight order always load c first, hence consider gemm_k is always vector 1
 
         # start emit
+        if SHISA_DEBUG:
+            self._emit(f"v_mov_b32 v[{v.v_ThreadID()}], v0")
+            self._emit(f"s_mov_b32 s[{s.s_GroupIDX()}], s[{s.s_bx()}]")
+            self._emit(f"s_mov_b32 s[{s.s_GroupIDY()}], s[{s.s_by()}]")
+            self._emit(f"s_mov_b32 s[{s.s_debugcnt()}], 0")
         self._emit(f"s_load_dwordx2  s[{s.s_p_in((0,1))}],       s[{s.s_ka((0, 1))}],    0+{k.k_p_in()}")
         self._emit(f"s_load_dwordx2  s[{s.s_p_wei((0,1))}],      s[{s.s_ka((0, 1))}],    0+{k.k_p_wei()}")
         self._emit(f"s_load_dwordx2  s[{s.s_p_out((0,1))}],      s[{s.s_ka((0, 1))}],    0+{k.k_p_out()}")
@@ -2332,7 +2344,7 @@ class igemm_bwd_gtc_nhwc_t(mc_base_t):
                 self._emit(f"s_add_u32 s[{s.s_tmp()}], s[{s.s_tmp()}], s[{s.s_dtile_ix()}]")
             self._emit(f"v_add_lshl_u32 v[{v.v_wei_os()}], v[{v.v_tmp(4)}], v[{v.v_tmp(5)}], {igemm_log2(data_byte)}")
             if self.tunable.nxe != 0:
-                self._emit(f"s_lshl_b32 s[{s.s_tmp(1)}] s[{s.s_c()}], {igemm_log2(data_byte)}")
+                self._emit(f"s_lshl_b32 s[{s.s_tmp(1)}], s[{s.s_c()}], {igemm_log2(data_byte)}")
 
             if self.tunable.merge_e == 1:
                 self._emit(f"v_mul_u32_u24 v[{v.v_tmp(0)}], s[{s.s_dtile_x()}], v[{v.v_wei_dslice_ix_itr()}]")

@@ -228,7 +228,7 @@ class mfma_main_loop_t(mc_base_t):
         if mbb_p_clear == 1:
             # hack on v_clear_nc
             v_clear_nc_strs = mbb_gld_p[0].mc_inst(-1).inst_str
-            v_clear_nc_list = re.split('[,\s]+', v_clear_nc_strs)
+            v_clear_nc_list = re.split(r"[,\s]+", v_clear_nc_strs)
             assert len(v_clear_nc_list) == 3 and v_clear_nc_list[0] == '.v_clear_nc'
             num_gld_p = int(v_clear_nc_list[2]) # TODO: check number
             assert num_gld_p % (len(mbb_gld_p) - mbb_p_clear) == 0

@@ -55,13 +55,17 @@ class compile_hip_t(object):
             cmd = ['/opt/rocm/bin/hipcc']
         else:
             cmd = ['/opt/rocm/bin/hipcc']
+        if os.name == 'nt':
+            cmd = ['hipcc']
         cmd += ['-x', 'hip']
         cmd += ['--cuda-gpu-arch={}'.format(arch_str)]
         cmd += ['--cuda-device-only', '-c', '-O3']
         cmd += ['{}'.format(self.hip_file_name)]
         cmd += ['-o', '{}'.format(self.target_hsaco)]
+        print("[hip] " + " ".join(cmd))
+        if os.name == 'nt':
+            return True
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr = subprocess.STDOUT)
-        # print("[hip] " + " ".join(cmd))
         try:
             (out, _) = p.communicate()
             if p.returncode != 0:
@@ -93,6 +97,8 @@ class compile_asm_t(object):
             cmd = ['/opt/rocm/llvm/bin/clang++']
         else:
             cmd = ['/opt/rocm/hcc/bin/clang']
+        if os.name == 'nt':
+            cmd = ['clang']
         cmd += ['-x', 'assembler']
         cmd += ['-I{}'.format(os.path.dirname(self.asm_file_name))]
         cmd += ['-target', 'amdgcn--amdhsa']
@@ -102,8 +108,8 @@ class compile_asm_t(object):
         # TODO: current compiler treat cov3 as default, so no need add extra flag
         cmd += ['{}'.format(self.asm_file_name)]
         cmd += ['-o', '{}'.format(self.target_hsaco)]
+        print("[asm] " + " ".join(cmd))
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr = subprocess.STDOUT)
-        # print("[asm] " + " ".join(cmd))
         try:
             (out, _) = p.communicate()
             if p.returncode != 0:
@@ -135,10 +141,14 @@ class compile_disass_t(object):
             cmd = ['/opt/rocm/hcc/bin/llvm-objdump']
             cmd += ['-disassemble']
             cmd += ['-mcpu={}'.format(arch_str)]
+        if os.name == 'nt':
+            cmd = ['llvm-objdump']
+            cmd += ['--disassemble']
+            cmd += ['--mcpu={}'.format(arch_str)]
 
         cmd += ['{}'.format(self.hsaco_file_name)]
         # cmd += ['>', '{}'.format(self.target_disass)]
-        # print("[dis] " + " ".join(cmd))
+        print("[dis] " + " ".join(cmd))
         try:
             fp = open(self.target_disass, "w")
             p = subprocess.Popen(cmd, stdout=fp)
@@ -229,7 +239,9 @@ class compile_host_t(object):
             if IGEMM_HOST_USE_XDNN:
                 cmd += [f'-L{bytes.fromhex(xdnnroot).decode()}/lib', f"-l{bytes.fromhex('646e6e6c').decode()}", f'-Wl,-rpath={bytes.fromhex(xdnnroot).decode()}/lib']
             cmd += ['-o', self.target_exec]
-        # print("[host] " + " ".join(cmd))
+        print("[host] " + " ".join(cmd))
+        if os.name == 'nt':
+            return True
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr = subprocess.STDOUT)
         try:
             (out, _) = p.communicate()

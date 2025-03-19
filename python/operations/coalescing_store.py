@@ -881,7 +881,7 @@ class igemm_coalescing_store_xdlops_t(mc_base_t):
             then, consider that introduced by granularity
             '''
             self._emit(f"v_lshrrev_b32 v[{v_tmp4}], {utility_log2(ctrl.cxm.lanegroup_m_per_thread())}, v[{v_gemm_im}]")
-            self._emit(f"v_and_b32 v[{v_tmp4}],  {ctrl.cxm.lanegroup_m_per_cluster() - 1} v[{v_tmp4}]   ; thread id of lanegroup_m_per_cluster")
+            self._emit(f"v_and_b32 v[{v_tmp4}],  {ctrl.cxm.lanegroup_m_per_cluster() - 1}, v[{v_tmp4}]   ; thread id of lanegroup_m_per_cluster")
             self._emit(f"v_lshlrev_b32 v[{v_co_sst}], {utility_log2(ctrl.cxm.lanegroup_m_per_thread())}, v[{v_tmp4}]")
 
             if ctrl.cxm.block_m_per_lanegroup() != 1:

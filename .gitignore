@@ -1,3 +1,5 @@
+.gitignore
+.vs/
 out/
 *.py[cod]
 __pycache__
