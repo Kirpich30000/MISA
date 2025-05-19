@@ -24,6 +24,7 @@
 # 
 ################################################################################
 
+import os
 from .codegen import *
 
 IGEMM_HOST_USE_GPU_NAIVE_CONV = True
@@ -34,6 +35,9 @@ def host_driver(**options):
         if key in some_dict:
             return some_dict[key]
         return default_value
+
+    if os.name == 'nt':
+        return True
 
     arch = get_dict_with_default(options, 'arch', 'gfx908')
     has_fp16_config = get_dict_with_default(options, 'has_fp16_config', False)
